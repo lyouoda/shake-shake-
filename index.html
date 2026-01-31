@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Echo Typo - Minimalist Thin Experience</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Noto Serif JP (Light) と Inter (Thin/Extra Light) を導入 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;300&family=Noto+Serif+JP:wght@200;300&display=swap');
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #030305;
+            touch-action: none;
+            font-family: 'Inter', 'Noto Serif JP', serif;
+            color: white;
+        }
+
+        canvas {
+            display: block;
+            filter: contrast(1.1) brightness(1.1);
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+        }
+
+        .ui-overlay {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 450px;
+            z-index: 50;
+            padding: 16px;
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        #permission-btn {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 14px 40px;
+            background: transparent;
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 100px;
+            font-weight: 100;
+            font-family: 'Inter', sans-serif;
+            letter-spacing: 0.3em;
+            transition: all 0.4s ease;
+            z-index: 100;
+            cursor: pointer;
+        }
+        
+        #permission-btn:hover {
+            background: white;
+            color: black;
+            border-color: white;
+        }
+
+        input {
+            background: transparent !important;
+            border: none !important;
+            color: white;
+            font-size: 15px;
+            font-weight: 100;
+            letter-spacing: 0.1em;
+            font-family: 'Inter', 'Noto Serif JP', serif;
+        }
+
+        .glow-dot {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(100, 130, 255, 0.05) 0%, rgba(0,0,0,0) 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="glow-dot" id="cursor-glow"></div>
+    <button id="permission-btn">INITIALIZE</button>
+
+    <div class="ui-overlay glass-panel" id="ui-container" style="display: none; opacity: 0;">
+        <div class="flex items-center gap-3">
+            <input type="text" id="typo-input" placeholder="Type letters or characters..." 
+                class="flex-1 outline-none py-1">
+            <button id="add-btn" class="bg-white/5 hover:bg-white/10 text-white w-10 h-10 rounded-full flex items-center justify-center transition-all border border-white/10">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+        </div>
+        <div class="mt-3 flex justify-between items-center opacity-30 px-1">
+            <span class="text-[8px] uppercase tracking-[0.3em] font-light">A-G: Harmonics | Others: Noise</span>
+            <span id="obj-count" class="text-[8px] font-light">0 Elements</span>
+        </div>
+    </div>
+
+    <script>
+        const { Engine, Render, Runner, Bodies, Composite, Vector, Body, Events } = Matter;
+
+        let engine, render, runner;
+        let audioCtx, delayNode, feedbackNode, masterGain;
+        let isStarted = false;
+        
+        const textureCache = {};
+        const MAX_BODIES = 150; 
+        const MAX_SOUNDS = 18;
+        let activeSounds = 0;
+
+        const NOTE_TABLE = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
+
+        async function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 0.25;
+
+            delayNode = audioCtx.createDelay(1.0);
+            delayNode.delayTime.value = 0.42;
+
+            feedbackNode = audioCtx.createGain();
+            feedbackNode.gain.value = 0.42;
+
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'highpass';
+            filter.frequency.value = 900;
+
+            delayNode.connect(feedbackNode);
+            feedbackNode.connect(filter);
+            filter.connect(delayNode);
+
+            delayNode.connect(masterGain);
+            masterGain.connect(audioCtx.destination);
+        }
+
+        function getPitchFromChar(char) {
+            const upper = char.toUpperCase();
+            if (NOTE_TABLE[upper] !== undefined) {
+                const baseA4 = 440;
+                const semitones = NOTE_TABLE[upper] - 9;
+                return baseA4 * Math.pow(2, semitones / 12);
+            }
+            const code = char.charCodeAt(0);
+            const pentatonic = [0, 2, 4, 7, 9];
+            const noteIndex = code % pentatonic.length;
+            const octave = (code % 3);
+            return 220 * Math.pow(2, (pentatonic[noteIndex] + (octave * 12)) / 12);
+        }
+
+        function playCrystalSound(frequency, volume = 0.2, decay = 0.8, isNote = false) {
+            if (!audioCtx || activeSounds >= MAX_SOUNDS) return;
+            
+            activeSounds++;
+            const osc1 = audioCtx.createOscillator();
+            const osc2 = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            
+            osc1.type = 'sine';
+            osc2.type = isNote ? 'sine' : 'triangle';
+            
+            osc1.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            osc2.frequency.setValueAtTime(isNote ? frequency * 2 : frequency * 2.02, audioCtx.currentTime);
+            
+            g.gain.setValueAtTime(0, audioCtx.currentTime);
+            g.gain.linearRampToValueAtTime(isNote ? volume * 1.4 : volume, audioCtx.currentTime + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (isNote ? decay * 1.8 : decay));
+            
+            osc1.connect(g);
+            osc2.connect(g);
+            g.connect(delayNode);
+            g.connect(masterGain);
+            
+            osc1.start();
+            osc2.start();
+            
+            const stopTime = audioCtx.currentTime + (isNote ? decay * 1.8 : decay);
+            osc1.stop(stopTime);
+            osc2.stop(stopTime);
+
+            osc1.onended = () => { activeSounds--; };
+        }
+
+        function initPhysics() {
+            engine = Engine.create();
+            engine.timing.timeScale = 0.8;
+
+            render = Render.create({
+                element: document.body,
+                engine: engine,
+                options: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    wireframes: false,
+                    background: 'transparent',
+                    pixelRatio: Math.min(window.devicePixelRatio, 2)
+                }
+            });
+
+            const walls = [
+                Bodies.rectangle(window.innerWidth / 2, -50, window.innerWidth, 100, { isStatic: true }),
+                Bodies.rectangle(window.innerWidth / 2, window.innerHeight + 50, window.innerWidth, 100, { isStatic: true }),
+                Bodies.rectangle(-50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true }),
+                Bodies.rectangle(window.innerWidth + 50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true })
+            ];
+            Composite.add(engine.world, walls);
+
+            Render.run(render);
+            runner = Runner.create();
+            Runner.run(runner, engine);
+
+            Events.on(engine, 'collisionStart', (event) => {
+                event.pairs.forEach(pair => {
+                    const speed = pair.bodyA.speed + pair.bodyB.speed;
+                    if (speed > 7) {
+                        const body = pair.bodyA.charFreq ? pair.bodyA : (pair.bodyB.charFreq ? pair.bodyB : null);
+                        if (body) {
+                            playCrystalSound(body.charFreq * 1.2, 0.03, 0.4, body.isNote);
+                        }
+                    }
+                });
+            });
+
+            const triggerBurst = (x, y) => {
+                explode(x, y);
+                createRipple(x, y);
+            };
+
+            window.addEventListener('mousedown', (e) => { if(e.target.tagName === 'CANVAS') triggerBurst(e.clientX, e.clientY); });
+            window.addEventListener('touchstart', (e) => { if(e.target.tagName === 'CANVAS') triggerBurst(e.touches[0].clientX, e.touches[0].clientY); });
+        }
+
+        function createTextTexture(char, isNote) {
+            const cacheKey = char + (isNote ? '_n' : '_t');
+            if (textureCache[cacheKey]) return textureCache[cacheKey];
+
+            const size = 160;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            const isLatin = /^[A-Za-z0-9]*$/.test(char);
+            
+            ctx.shadowBlur = isNote ? 25 : 12;
+            ctx.shadowColor = isNote ? 'rgba(255, 230, 180, 0.4)' : 'rgba(180, 200, 255, 0.2)';
+            ctx.fillStyle = isNote ? '#fffef5' : 'white';
+            
+            // Thin Weights
+            if (isLatin) {
+                ctx.font = `100 85px "Inter", sans-serif`;
+            } else {
+                ctx.font = `200 75px "Noto Serif JP", serif`;
+            }
+            
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(char, size/2, size/2);
+            
+            const dataUrl = canvas.toDataURL();
+            textureCache[cacheKey] = dataUrl;
+            return dataUrl;
+        }
+
+        function addTypo(text) {
+            if (!text) return;
+            const chars = text.split('');
+            chars.forEach((char, i) => {
+                setTimeout(() => {
+                    const currentBodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+                    if (currentBodies.length >= MAX_BODIES) {
+                        Composite.remove(engine.world, currentBodies[0]);
+                    }
+
+                    const x = window.innerWidth / 2 + (Math.random() - 0.5) * 80;
+                    const y = window.innerHeight / 2;
+                    const isNote = NOTE_TABLE[char.toUpperCase()] !== undefined;
+                    const freq = getPitchFromChar(char);
+                    
+                    const box = Bodies.circle(x, y, isNote ? 28 : 24, {
+                        friction: 0.01,
+                        restitution: isNote ? 0.98 : 0.94,
+                        render: {
+                            sprite: {
+                                texture: createTextTexture(char, isNote),
+                                xScale: 0.5, yScale: 0.5
+                            }
+                        }
+                    });
+                    
+                    box.charFreq = freq;
+                    box.isNote = isNote;
+                    Composite.add(engine.world, box);
+                    updateCount();
+                    playCrystalSound(freq, isNote ? 0.28 : 0.18, 1.2, isNote);
+                }, i * 115);
+            });
+        }
+
+        function explode(x, y) {
+            const bodies = Composite.allBodies(engine.world);
+            let soundTriggered = false;
+            
+            bodies.forEach(body => {
+                if (body.isStatic) return;
+                const delta = Vector.sub(body.position, { x, y });
+                const distance = Vector.magnitude(delta);
+                const force = Vector.mult(Vector.normalise(delta), 0.026 * (1500 / (distance + 150)));
+                
+                Body.applyForce(body, body.position, force);
+                
+                if (!soundTriggered && distance < 140) {
+                    playCrystalSound(body.charFreq || 440, 0.35, 1.6, body.isNote);
+                    soundTriggered = true;
+                }
+            });
+            if (!soundTriggered) playCrystalSound(220, 0.1, 1.0);
+        }
+
+        function createRipple(x, y) {
+            const ripple = document.createElement('div');
+            ripple.className = 'fixed rounded-full pointer-events-none border border-white/5';
+            ripple.style.left = x + 'px'; ripple.style.top = y + 'px';
+            ripple.style.width = '0px'; ripple.style.height = '0px';
+            ripple.style.transform = 'translate(-50%, -50%)';
+            ripple.style.transition = 'all 1.6s cubic-bezier(0.1, 1, 0.2, 1)';
+            document.body.appendChild(ripple);
+            
+            requestAnimationFrame(() => {
+                ripple.style.width = '700px'; ripple.style.height = '700px';
+                ripple.style.opacity = '0';
+            });
+            setTimeout(() => ripple.remove(), 1600);
+        }
+
+        function updateCount() {
+            const count = Composite.allBodies(engine.world).filter(b => !b.isStatic).length;
+            document.getElementById('obj-count').innerText = `${count} Elements`;
+        }
+
+        function handleMotion(event) {
+            const acc = event.accelerationIncludingGravity;
+            if (!acc) return;
+            engine.gravity.x = acc.x / 13;
+            engine.gravity.y = -acc.y / 13;
+
+            const shake = event.acceleration;
+            if (Math.abs(shake.x) > 25 || Math.abs(shake.y) > 25) {
+                explode(window.innerWidth / 2, window.innerHeight / 2);
+            }
+        }
+
+        const startBtn = document.getElementById('permission-btn');
+        const uiContainer = document.getElementById('ui-container');
+        const input = document.getElementById('typo-input');
+        const addBtn = document.getElementById('add-btn');
+        const cursorGlow = document.getElementById('cursor-glow');
+
+        window.addEventListener('mousemove', (e) => {
+            cursorGlow.style.left = (e.clientX - 200) + 'px';
+            cursorGlow.style.top = (e.clientY - 200) + 'px';
+        });
+
+        startBtn.addEventListener('click', async () => {
+            if (isStarted) return;
+            isStarted = true;
+            await initAudio();
+            initPhysics();
+            
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const response = await DeviceMotionEvent.requestPermission();
+                    if (response === 'granted') window.addEventListener('devicemotion', handleMotion);
+                } catch (e) { console.error(e); }
+            } else {
+                window.addEventListener('devicemotion', handleMotion);
+            }
+
+            startBtn.style.opacity = '0';
+            setTimeout(() => {
+                startBtn.style.display = 'none';
+                uiContainer.style.display = 'block';
+                setTimeout(() => uiContainer.style.opacity = '1', 50);
+                addTypo("thin");
+            }, 600);
+        });
+
+        addBtn.addEventListener('click', () => { addTypo(input.value); input.value = ''; });
+        input.addEventListener('keypress', (e) => { if (e.key === 'Enter') addBtn.click(); });
+        window.addEventListener('resize', () => {
+            render.canvas.width = window.innerWidth;
+            render.canvas.height = window.innerHeight;
+        });
+
+    </script>
+</body>
+</html>
