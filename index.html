@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Shake! Shake!</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,11 +11,16 @@
 
         body {
             margin: 0;
+            padding: 0;
             overflow: hidden;
             background: #030305;
             touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
             font-family: 'Inter', 'Noto Serif JP', serif;
             color: white;
+            height: 100vh;
+            width: 100vw;
         }
 
         canvas {
@@ -23,53 +28,51 @@
             filter: contrast(1.1) brightness(1.2);
         }
 
-        /* 洗練されたフローティングUI */
         .glass-panel {
             background: rgba(255, 255, 255, 0.02);
-            backdrop-filter: blur(25px);
-            -webkit-backdrop-filter: blur(25px);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 30px;
+            border-radius: 24px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         }
 
         .ui-overlay {
             position: fixed;
-            top: 40px;      
+            top: 20px;
             left: 50%;
             transform: translateX(-50%);
-            width: 85%;
-            max-width: 500px;
-            z-index: 50;
-            padding: 10px 10px 10px 24px;
-            transition: all 0.5s cubic-bezier(0.2, 1, 0.3, 1);
-        }
-
-        .ui-overlay:focus-within {
-            background: rgba(255, 255, 255, 0.05);
-            border-color: rgba(255, 255, 255, 0.2);
             width: 90%;
+            max-width: 400px;
+            z-index: 50;
+            padding: 8px 8px 8px 20px;
+            transition: all 0.4s cubic-bezier(0.2, 1, 0.3, 1);
         }
 
-        /* ボリュームコントロール */
+        /* モバイルで入力中にUIを少し上げる */
+        .ui-overlay.focused {
+            top: 10px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
         .volume-control {
             position: fixed;
-            bottom: 30px;
-            right: 30px;
+            bottom: 20px;
+            right: 20px;
             z-index: 60;
             display: flex;
             align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.03);
-            padding: 8px 16px;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 6px 14px;
             border-radius: 100px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
         }
 
         input[type="range"] {
             -webkit-appearance: none;
-            width: 80px;
+            width: 60px;
             background: transparent;
         }
 
@@ -81,12 +84,11 @@
 
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 10px;
-            width: 10px;
+            height: 12px;
+            width: 12px;
             border-radius: 50%;
             background: white;
-            margin-top: -4px;
-            cursor: pointer;
+            margin-top: -5px;
         }
 
         #permission-btn {
@@ -94,30 +96,35 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            padding: 16px 48px;
+            padding: 16px 40px;
             background: transparent;
             color: white;
-            border: 1px solid rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
             border-radius: 100px;
-            font-weight: 100;
-            letter-spacing: 0.4em;
-            transition: all 0.5s ease;
+            font-weight: 200;
+            letter-spacing: 0.3em;
+            transition: all 0.3s ease;
             z-index: 100;
         }
         
-        #permission-btn:hover {
-            background: white;
-            color: black;
-            box-shadow: 0 0 30px rgba(255,255,255,0.2);
+        @media (hover: hover) {
+            #permission-btn:hover {
+                background: white;
+                color: black;
+            }
+        }
+
+        #permission-btn:active {
+            transform: translate(-50%, -50%) scale(0.95);
+            background: rgba(255,255,255,0.1);
         }
 
         input[type="text"] {
             background: transparent;
             border: none;
             color: white;
-            font-size: 16px;
+            font-size: 16px; /* モバイルでズームされないための最小サイズ */
             font-weight: 200;
-            letter-spacing: 0.1em;
             width: 100%;
         }
 
@@ -127,37 +134,36 @@
 
         .glow-dot {
             position: absolute;
-            width: 500px;
-            height: 500px;
-            background: radial-gradient(circle, rgba(120, 150, 255, 0.04) 0%, rgba(0,0,0,0) 70%);
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(120, 150, 255, 0.05) 0%, rgba(0,0,0,0) 70%);
             pointer-events: none;
             z-index: -1;
+            transition: transform 0.1s ease-out;
         }
     </style>
 </head>
 <body>
 
     <div class="glow-dot" id="cursor-glow"></div>
-    <button id="permission-btn">INITIALIZE</button>
+    <button id="permission-btn">TAP TO START</button>
 
-    <!-- Header Input UI -->
     <div class="ui-overlay glass-panel" id="ui-container" style="display: none; opacity: 0;">
-        <div class="flex items-center gap-4">
-            <input type="text" id="typo-input" placeholder="Type thoughts..." autocomplete="off">
-            <button id="add-btn" class="bg-white text-black w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 shadow-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <div class="flex items-center gap-3">
+            <input type="text" id="typo-input" placeholder="Say something..." autocomplete="off">
+            <button id="add-btn" class="bg-white text-black w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             </button>
         </div>
-        <div class="mt-2 flex justify-between items-center opacity-30 px-1 pointer-events-none">
-            <span class="text-[7px] uppercase tracking-[0.4em] font-light">A-G: Harmonics | Tilt: Drift</span>
-            <span id="obj-count" class="text-[7px] font-light">0 ELEMENTS</span>
+        <div class="mt-2 flex justify-between items-center opacity-40 px-1 pointer-events-none">
+            <span class="text-[8px] uppercase tracking-[0.2em] font-light">Tilt to drift • Shake to burst</span>
+            <span id="obj-count" class="text-[8px] font-light">0 ELEMENTS</span>
         </div>
     </div>
 
-    <!-- Volume UI -->
     <div class="volume-control" id="volume-container" style="display: none; opacity: 0;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-        <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0.25">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-50"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+        <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="0.3">
     </div>
 
     <script>
@@ -169,77 +175,51 @@
         let walls = {};
         
         const textureCache = {};
-        const MAX_BODIES = 120; 
-        const MAX_SOUNDS = 24;
+        const MAX_BODIES = 80; // モバイル向けに少し制限
+        const MAX_SOUNDS = 15;
         let activeSounds = 0;
 
         const NOTE_TABLE = { 'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11 };
 
         async function initAudio() {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            
             masterGain = audioCtx.createGain();
-            masterGain.gain.value = 0.25;
+            masterGain.gain.value = 0.3;
 
-            // 響きをリッチにするためのディレイ設定
             delayNode = audioCtx.createDelay(1.0);
-            delayNode.delayTime.value = 0.5; // 500msのディレイ
+            delayNode.delayTime.value = 0.4;
 
             feedbackNode = audioCtx.createGain();
-            feedbackNode.gain.value = 0.55; // 響きの長さ（回帰）
+            feedbackNode.gain.value = 0.5;
 
             mainFilter = audioCtx.createBiquadFilter();
             mainFilter.type = 'lowpass';
-            mainFilter.frequency.value = 2500;
-            mainFilter.Q.value = 1;
+            mainFilter.frequency.value = 2200;
 
-            const highPass = audioCtx.createBiquadFilter();
-            highPass.type = 'highpass';
-            highPass.frequency.value = 400;
-
-            // フィードバックループの形成
             delayNode.connect(feedbackNode);
             feedbackNode.connect(mainFilter);
-            mainFilter.connect(highPass);
-            highPass.connect(delayNode);
-
-            // メイン出力への接続
+            mainFilter.connect(delayNode);
             delayNode.connect(masterGain);
             masterGain.connect(audioCtx.destination);
         }
 
-        function getPitchFromChar(char) {
-            const upper = char.toUpperCase();
-            if (NOTE_TABLE[upper] !== undefined) {
-                const baseA4 = 440;
-                const semitones = NOTE_TABLE[upper] - 9;
-                return baseA4 * Math.pow(2, (semitones + 12) / 12); // 1オクターブ上げ
-            }
-            const code = char.charCodeAt(0);
-            const pentatonic = [0, 2, 4, 7, 9];
-            const noteIndex = code % pentatonic.length;
-            return 220 * Math.pow(2, (pentatonic[noteIndex] + 12) / 12);
-        }
-
-        function playCrystalSound(frequency, volume = 0.2, decay = 1.2, isNote = false) {
+        function playCrystalSound(frequency, volume = 0.1, decay = 1.0, isNote = false) {
             if (!audioCtx || activeSounds >= MAX_SOUNDS) return;
             
             activeSounds++;
             const osc = audioCtx.createOscillator();
             const g = audioCtx.createGain();
             
-            // ノート（A-G）の場合はサイン波、それ以外は少し倍音を含む三角波
             osc.type = isNote ? 'sine' : 'triangle';
             osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
             
-            // アタックとデリケートな減衰
             g.gain.setValueAtTime(0, audioCtx.currentTime);
-            g.gain.linearRampToValueAtTime(volume, audioCtx.currentTime + 0.03);
+            g.gain.linearRampToValueAtTime(volume, audioCtx.currentTime + 0.02);
             g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + decay);
             
             osc.connect(g);
-            g.connect(delayNode); // ディレイ（響き）へ送る
-            g.connect(masterGain); // 直接出力へも送る
+            g.connect(delayNode);
+            g.connect(masterGain);
             
             osc.start();
             osc.stop(audioCtx.currentTime + decay + 0.1);
@@ -253,11 +233,11 @@
 
             if (Object.keys(walls).length > 0) Composite.remove(engine.world, Object.values(walls));
 
-            const options = { isStatic: true, friction: 0.05, restitution: 0.8 };
-            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w + thickness, thickness, options);
-            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w + thickness, thickness, options);
-            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h + thickness, options);
-            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h + thickness, options);
+            const options = { isStatic: true, friction: 0.1, restitution: 0.6 };
+            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w, thickness, options);
+            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w, thickness, options);
+            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h, options);
+            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h, options);
 
             Composite.add(engine.world, Object.values(walls));
         }
@@ -273,27 +253,33 @@
                     width: window.innerWidth,
                     height: window.innerHeight,
                     wireframes: false,
-                    background: 'transparent'
+                    background: 'transparent',
+                    pixelRatio: window.devicePixelRatio > 1 ? 2 : 1
                 }
             });
 
             createWalls();
             Render.run(render);
-            Runner.run(Runner.create(), engine);
+            runner = Runner.create();
+            Runner.run(runner, engine);
 
             Events.on(engine, 'collisionStart', (event) => {
                 event.pairs.forEach(pair => {
                     const body = pair.bodyA.charFreq ? pair.bodyA : (pair.bodyB.charFreq ? pair.bodyB : null);
                     const speed = pair.bodyA.speed + pair.bodyB.speed;
-                    if (body && speed > 6) {
-                        playCrystalSound(body.charFreq * 1.5, 0.02 * (speed / 10), 0.4, body.isNote);
+                    if (body && speed > 5) {
+                        playCrystalSound(body.charFreq * 1.2, 0.015 * (speed / 8), 0.5, body.isNote);
                     }
                 });
             });
 
             const trigger = (x, y) => { explode(x, y); createRipple(x, y); };
-            window.addEventListener('mousedown', (e) => { if(e.target.tagName === 'CANVAS') trigger(e.clientX, e.clientY); });
-            window.addEventListener('touchstart', (e) => { if(e.target.tagName === 'CANVAS') trigger(e.touches[0].clientX, e.touches[0].clientY); });
+            window.addEventListener('mousedown', (e) => { 
+                if(e.target.tagName === 'CANVAS') trigger(e.clientX, e.clientY); 
+            });
+            window.addEventListener('touchstart', (e) => { 
+                if(e.target.tagName === 'CANVAS') trigger(e.touches[0].clientX, e.touches[0].clientY); 
+            }, {passive: true});
         }
 
         function createTextTexture(char, isNote) {
@@ -305,16 +291,15 @@
             canvas.width = size; canvas.height = size;
             const ctx = canvas.getContext('2d');
             
-            ctx.fillStyle = isNote ? '#fff' : 'rgba(255,255,255,0.7)';
-            ctx.font = `200 64px "Inter", "Noto Serif JP", serif`;
+            ctx.fillStyle = isNote ? '#fff' : 'rgba(255,255,255,0.75)';
+            ctx.font = `200 60px "Inter", "Noto Serif JP", serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             
             if (isNote) {
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = "rgba(255,255,255,0.5)";
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = "rgba(255,255,255,0.4)";
             }
-
             ctx.fillText(char, size/2, size/2);
             
             const url = canvas.toDataURL();
@@ -324,19 +309,20 @@
 
         function addTypo(text) {
             if (!text) return;
-            text.split('').forEach((char, i) => {
+            const chars = text.split('');
+            chars.forEach((char, i) => {
                 setTimeout(() => {
                     const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
                     if (bodies.length >= MAX_BODIES) Composite.remove(engine.world, bodies[0]);
 
-                    const x = window.innerWidth / 2 + (Math.random() - 0.5) * 60;
-                    const y = 140; 
+                    const x = window.innerWidth / 2 + (Math.random() - 0.5) * 40;
+                    const y = 80;
                     const isNote = NOTE_TABLE[char.toUpperCase()] !== undefined;
-                    const freq = getPitchFromChar(char);
+                    const freq = isNote ? 440 * Math.pow(2, (NOTE_TABLE[char.toUpperCase()] - 9) / 12) : 200 + (char.charCodeAt(0) % 400);
                     
-                    const box = Bodies.circle(x, y, isNote ? 28 : 24, {
-                        friction: 0.02,
-                        restitution: 0.95,
+                    const box = Bodies.circle(x, y, isNote ? 26 : 22, {
+                        friction: 0.05,
+                        restitution: 0.8,
                         render: {
                             sprite: {
                                 texture: createTextTexture(char, isNote),
@@ -349,8 +335,8 @@
                     box.isNote = isNote;
                     Composite.add(engine.world, box);
                     updateCount();
-                    playCrystalSound(freq, isNote ? 0.3 : 0.2, 1.5, isNote);
-                }, i * 120);
+                    playCrystalSound(freq, isNote ? 0.25 : 0.15, 1.2, isNote);
+                }, i * 100);
             });
         }
 
@@ -360,27 +346,27 @@
                 if (body.isStatic) return;
                 const d = Vector.sub(body.position, { x, y });
                 const dist = Vector.magnitude(d);
-                if (dist < 400) {
-                    const f = Vector.mult(Vector.normalise(d), 0.025 * (800 / (dist + 80)));
-                    Body.applyForce(body, body.position, f);
+                if (dist < 300) {
+                    const force = 0.02 * (1 - dist / 300);
+                    Body.applyForce(body, body.position, Vector.mult(Vector.normalise(d), force));
                 }
             });
-            playCrystalSound(120, 0.15, 1.2);
+            playCrystalSound(150, 0.1, 0.8);
         }
 
         function createRipple(x, y) {
             const r = document.createElement('div');
-            r.className = 'fixed rounded-full pointer-events-none border border-white/10';
+            r.className = 'fixed rounded-full pointer-events-none border border-white/20';
             r.style.left = x + 'px'; r.style.top = y + 'px';
             r.style.width = '0px'; r.style.height = '0px';
             r.style.transform = 'translate(-50%, -50%)';
-            r.style.transition = 'all 1.5s cubic-bezier(0.1, 1, 0.2, 1)';
+            r.style.transition = 'all 1s cubic-bezier(0.1, 1, 0.2, 1)';
             document.body.appendChild(r);
             requestAnimationFrame(() => {
-                r.style.width = '600px'; r.style.height = '600px';
+                r.style.width = '400px'; r.style.height = '400px';
                 r.style.opacity = '0';
             });
-            setTimeout(() => r.remove(), 1500);
+            setTimeout(() => r.remove(), 1000);
         }
 
         function updateCount() {
@@ -391,11 +377,25 @@
         function handleMotion(event) {
             const acc = event.accelerationIncludingGravity;
             if (!acc) return;
-            const maxTilt = 0.4;
-            engine.gravity.x = Math.max(-maxTilt, Math.min(acc.x / 10, maxTilt));
             
+            // iOSとAndroidの正規化（iOSは正負が逆転しやすい）
+            let gx = acc.x / 10;
+            let gy = acc.y / 10;
+            
+            // 端末の向きに合わせて重力を調整
+            if (window.orientation === 90) {
+                engine.gravity.x = -gy;
+                engine.gravity.y = -gx;
+            } else if (window.orientation === -90) {
+                engine.gravity.x = gy;
+                engine.gravity.y = gx;
+            } else {
+                engine.gravity.x = -gx;
+                engine.gravity.y = gy;
+            }
+
             const shake = event.acceleration;
-            if (shake && (Math.abs(shake.x) > 30 || Math.abs(shake.y) > 30)) {
+            if (shake && (Math.abs(shake.x) > 20 || Math.abs(shake.y) > 20)) {
                 explode(window.innerWidth / 2, window.innerHeight / 2);
             }
         }
@@ -409,13 +409,15 @@
         const cursorGlow = document.getElementById('cursor-glow');
 
         window.addEventListener('mousemove', (e) => {
-            cursorGlow.style.left = (e.clientX - 250) + 'px';
-            cursorGlow.style.top = (e.clientY - 250) + 'px';
+            cursorGlow.style.transform = `translate(${e.clientX - 200}px, ${e.clientY - 200}px)`;
         });
 
         volSlider.addEventListener('input', (e) => {
             if (masterGain) masterGain.gain.value = e.target.value;
         });
+
+        input.addEventListener('focus', () => uiContainer.classList.add('focused'));
+        input.addEventListener('blur', () => uiContainer.classList.remove('focused'));
 
         startBtn.addEventListener('click', async () => {
             if (isStarted) return;
@@ -441,18 +443,29 @@
                     uiContainer.style.opacity = '1';
                     volContainer.style.opacity = '1';
                 }, 50);
-                addTypo("echo");
-            }, 600);
+                addTypo("flow");
+            }, 500);
         });
 
-        addBtn.addEventListener('click', () => { addTypo(input.value); input.value = ''; });
+        addBtn.addEventListener('click', () => { 
+            if (!input.value.trim()) return;
+            addTypo(input.value); 
+            input.value = ''; 
+            input.blur(); // 入力後にキーボードを閉じる（モバイル体験向上）
+        });
+        
         input.addEventListener('keypress', (e) => { if (e.key === 'Enter') addBtn.click(); });
         
+        // リサイズ時の安定化
+        let resizeTimer;
         window.addEventListener('resize', () => {
-            if (!render) return;
-            render.canvas.width = window.innerWidth;
-            render.canvas.height = window.innerHeight;
-            createWalls();
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                if (!render) return;
+                render.canvas.width = window.innerWidth;
+                render.canvas.height = window.innerHeight;
+                createWalls();
+            }, 250);
         });
 
     </script>
