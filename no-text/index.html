@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Sensory Sound Box</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #0a0a0c;
+            touch-action: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: white;
+            height: 100vh;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+            z-index: 10;
+        }
+
+        .glass-btn {
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 24px;
+            border-radius: 100px;
+            font-size: 12px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+
+        .glass-btn:active {
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        #start-overlay {
+            position: fixed;
+            inset: 0;
+            background: #0a0a0c;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 20px;
+            padding: 40px;
+        }
+
+        .hint {
+            font-size: 10px;
+            opacity: 0.5;
+            text-align: center;
+            line-height: 2;
+        }
+
+        #debug-info {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            font-size: 8px;
+            font-family: monospace;
+            color: #0f0;
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-overlay">
+        <button id="start-btn" class="glass-btn">START EXPERIENCE</button>
+        <p class="hint">端末を傾けて転がす / 振ってシャッフル<br>画面タップでオブジェクトを追加</p>
+    </div>
+
+    <!-- 動作確認用のデバッグ情報。不要になったら削除可能 -->
+    <div id="debug-info">Sensor: Off</div>
+
+    <div id="ui-layer" style="display: none;">
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-xs font-light tracking-widest opacity-80 uppercase">Sensory Box</h1>
+                <p id="stats" class="text-[10px] opacity-40 mt-1">OBJECTS: 0</p>
+            </div>
+            <button id="clear-btn" class="glass-btn text-[10px] py-2 px-4">Clear</button>
+        </div>
+    </div>
+
+    <script>
+        const { Engine, Render, Runner, Bodies, Composite, Vector, Body, Events } = Matter;
+
+        let engine, render, audioCtx, masterGain;
+        let isStarted = false;
+        let walls = {};
+        const debug = document.getElementById('debug-info');
+
+        const SCALE = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25];
+
+        function init() {
+            engine = Engine.create();
+            engine.gravity.y = 0;
+
+            render = Render.create({
+                element: document.body,
+                engine: engine,
+                options: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    wireframes: false,
+                    background: 'transparent',
+                    pixelRatio: window.devicePixelRatio
+                }
+            });
+
+            createWalls();
+            Render.run(render);
+            Runner.run(Runner.create(), engine);
+
+            Events.on(engine, 'collisionStart', (event) => {
+                event.pairs.forEach(pair => {
+                    const speed = Vector.magnitude(Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity));
+                    if (speed > 0.8) {
+                        const target = pair.bodyA.isStatic ? pair.bodyB : pair.bodyA;
+                        playSound(target.freq || 300, Math.min(0.2, speed * 0.01));
+                    }
+                });
+            });
+
+            // 初期オブジェクト
+            for(let i=0; i<5; i++) {
+                setTimeout(() => addCircle(), i * 150);
+            }
+        }
+
+        function createWalls() {
+            const thickness = 100;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            if (Object.keys(walls).length > 0) Composite.remove(engine.world, Object.values(walls));
+            
+            const options = { isStatic: true, friction: 0.05, restitution: 1.0 };
+            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w, thickness, options);
+            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w, thickness, options);
+            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h, options);
+            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h, options);
+            Composite.add(engine.world, Object.values(walls));
+        }
+
+        function addCircle(x = window.innerWidth / 2, y = window.innerHeight / 2) {
+            const radius = 10 + Math.random() * 15;
+            const hue = Math.floor(Math.random() * 360);
+            
+            const circle = Bodies.circle(x, y, radius, {
+                restitution: 1.0, 
+                friction: 0.01, 
+                frictionAir: 0.005,
+                render: { 
+                    fillStyle: `hsl(${hue}, 70%, 60%)`,
+                    strokeStyle: 'rgba(255,255,255,0.2)',
+                    lineWidth: 2
+                }
+            });
+            circle.freq = SCALE[Math.floor(Math.random() * SCALE.length)];
+            
+            Composite.add(engine.world, circle);
+            const count = Composite.allBodies(engine.world).filter(b => !b.isStatic).length;
+            document.getElementById('stats').innerText = `OBJECTS: ${count}`;
+        }
+
+        function playSound(freq, vol) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
+        }
+
+        function handleOrientation(event) {
+            if (!isStarted) return;
+            const b = event.beta; 
+            const g = event.gamma;
+
+            if (b !== null && g !== null) {
+                debug.innerText = `B: ${b.toFixed(0)}, G: ${g.toFixed(0)}`;
+                
+                // 傾きの感度調整
+                let gx = g * 0.15;
+                let gy = b * 0.15;
+
+                // 画面の向き（縦横）に合わせて軸を修正
+                const orientation = window.screen.orientation ? window.screen.orientation.type : window.orientation;
+                if (orientation.includes('landscape') || orientation === 90 || orientation === -90) {
+                    const temp = gx;
+                    gx = gy * (orientation === 90 || orientation.includes('primary') ? 1 : -1);
+                    gy = temp * (orientation === 90 || orientation.includes('primary') ? -1 : 1);
+                }
+
+                engine.gravity.x = Math.max(-2.5, Math.min(gx, 2.5));
+                engine.gravity.y = Math.max(-2.5, Math.min(gy, 2.5));
+            }
+        }
+
+        function handleMotion(event) {
+            if (!isStarted) return;
+            const acc = event.acceleration;
+            if (acc && (Math.abs(acc.x) > 18 || Math.abs(acc.y) > 18)) {
+                // シャッフル（振った時）
+                Composite.allBodies(engine.world).forEach(b => {
+                    if(!b.isStatic) {
+                        Body.applyForce(b, b.position, { 
+                            x: (Math.random()-0.5)*0.3, 
+                            y: (Math.random()-0.5)*0.3 
+                        });
+                    }
+                });
+            }
+        }
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            // Audio Context 解除
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 0.5;
+            masterGain.connect(audioCtx.destination);
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+            // センサー登録
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const status = await DeviceOrientationEvent.requestPermission();
+                    if (status === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation, true);
+                        window.addEventListener('devicemotion', handleMotion, true);
+                    }
+                } catch (e) { debug.innerText = "Error: " + e.message; }
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation, true);
+                window.addEventListener('devicemotion', handleMotion, true);
+            }
+
+            init();
+            isStarted = true;
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('ui-layer').style.display = 'flex';
+        });
+
+        // 画面タップで追加
+        window.addEventListener('touchstart', (e) => {
+            if (!isStarted || e.target.closest('button')) return;
+            const touch = e.touches[0];
+            addCircle(touch.clientX, touch.clientY);
+            playSound(150, 0.05);
+        }, { passive: false });
+
+        // クリア機能
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+            Composite.remove(engine.world, bodies);
+            document.getElementById('stats').innerText = `OBJECTS: 0`;
+        });
+
+        window.addEventListener('resize', () => {
+            if (!render) return;
+            render.canvas.width = window.innerWidth;
+            render.canvas.height = window.innerHeight;
+            createWalls();
+        });
+    </script>
+</body>
+</html>
