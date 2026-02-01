@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Sensory Sound Box - Evolved</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #010103;
+            touch-action: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: white;
+            height: 100vh;
+        }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: env(safe-area-inset-top, 24px) 24px env(safe-area-inset-bottom, 24px) 24px;
+            z-index: 10;
+        }
+
+        .glass-btn {
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 28px;
+            border-radius: 100px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.7);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .glass-btn:active {
+            transform: scale(0.96);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        #start-overlay {
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at center, #0a0a15 0%, #020204 100%);
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 32px;
+        }
+
+        .luminous-text {
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
+        }
+
+        .hint {
+            font-size: 10px;
+            opacity: 0.3;
+            text-align: center;
+            line-height: 2.2;
+            letter-spacing: 0.4em;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-overlay">
+        <h2 class="text-[11px] tracking-[1.2em] opacity-80 uppercase luminous-text">Resonant Field</h2>
+        <button id="start-btn" class="glass-btn px-10 py-5">Initiate</button>
+        <p class="hint">TAP TO CREATE<br>DRAG TO DISTURB<br>TILT TO FLOW</p>
+    </div>
+
+    <div id="ui-layer" style="display: none;">
+        <div class="flex justify-between items-start">
+            <div class="opacity-50 pl-4">
+                <h1 class="text-[9px] font-bold tracking-[0.6em] uppercase">Gravitational Audio</h1>
+                <p id="stats" class="text-[8px] mt-2 tracking-[0.4em]">NODES: 0 / 30</p>
+            </div>
+            <button id="clear-btn" class="glass-btn">Purge</button>
+        </div>
+    </div>
+
+    <script>
+        const { Engine, Render, Runner, Bodies, Composite, Vector, Body, Events, Mouse, MouseConstraint } = Matter;
+
+        let engine, render, runner, audioCtx, masterGain, compressor, reverbNode;
+        let isStarted = false;
+        let walls = {};
+        const MAX_OBJECTS = 30; 
+        const MAX_VELOCITY = 15;
+        const MAX_CONCURRENT_VOICES = 8;
+        const ATTRACTION_RANGE = 150;
+        const ATTRACTION_STRENGTH = 0.00008;
+        let particles = [];
+        let activeVoices = [];
+        let proximityOscillators = new Map();
+        let droneOscillators = [];
+        let droneGain = null;
+
+        const SCALE = [
+            130.81, 146.83, 164.81, 185.00, 196.00, 220.00, 246.94,
+            261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88,
+            523.25, 587.33, 659.25, 698.46, 783.99, 880.00,
+            1046.50, 1174.66, 1318.51, 1396.91, 1567.98, 1760.00
+        ];
+
+        function applyFrequencyBend(bodyA, bodyB, proximityFactor) {
+            if (!audioCtx) return;
+            
+            const now = audioCtx.currentTime;
+            const bendAmount = proximityFactor * 0.008; // 最大0.8%のベンド（より微細に）
+            
+            [bodyA, bodyB].forEach(body => {
+                if (!body.id) return;
+                const voiceData = proximityOscillators.get(body.id);
+                if (voiceData && now < voiceData.stopTime) {
+                    voiceData.oscillators.forEach(({ osc, harmonic }) => {
+                        const targetFreq = voiceData.baseFreq * harmonic * (1 + bendAmount);
+                        osc.frequency.linearRampToValueAtTime(targetFreq, now + 0.1);
+                    });
+                }
+            });
+        }
+
+        function createAmbientDrone() {
+            if (!audioCtx || droneOscillators.length > 0) return;
+            
+            droneGain = audioCtx.createGain();
+            droneGain.gain.setValueAtTime(0, audioCtx.currentTime);
+            droneGain.gain.linearRampToValueAtTime(0.015, audioCtx.currentTime + 8); // ゆっくりフェードイン
+            
+            const droneFilter = audioCtx.createBiquadFilter();
+            droneFilter.type = 'lowpass';
+            droneFilter.frequency.setValueAtTime(800, audioCtx.currentTime);
+            droneFilter.Q.setValueAtTime(0.5, audioCtx.currentTime);
+            
+            // 複数の低音サイン波でドローン生成
+            const droneFreqs = [65.41, 130.81, 196.00]; // C2, C3, G3
+            
+            droneFreqs.forEach((freq, i) => {
+                const osc = audioCtx.createOscillator();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                osc.detune.setValueAtTime((Math.random() - 0.5) * 8, audioCtx.currentTime); // わずかなデチューン
+                
+                const oscGain = audioCtx.createGain();
+                oscGain.gain.setValueAtTime(i === 0 ? 0.6 : 0.3, audioCtx.currentTime);
+                
+                osc.connect(oscGain);
+                oscGain.connect(droneFilter);
+                osc.start();
+                
+                droneOscillators.push({ osc, oscGain, freq });
+            });
+            
+            droneFilter.connect(droneGain);
+            droneGain.connect(masterGain);
+        }
+
+        function updateAmbientDrone() {
+            if (!audioCtx || droneOscillators.length === 0) return;
+            
+            const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+            if (bodies.length === 0) return;
+            
+            // 全オブジェクトの平均速度を計算
+            const avgSpeed = bodies.reduce((sum, b) => sum + Vector.magnitude(b.velocity), 0) / bodies.length;
+            const normalizedSpeed = Math.min(1, avgSpeed / 5);
+            
+            // 速度に応じてドローンの音色を微妙に変化
+            const now = audioCtx.currentTime;
+            droneOscillators.forEach(({ osc, oscGain, freq }, i) => {
+                const detuneVariation = Math.sin(now * 0.3 + i) * 3 * normalizedSpeed;
+                osc.detune.linearRampToValueAtTime(detuneVariation, now + 0.5);
+            });
+        }
+
+        function createReverb() {
+            const length = audioCtx.sampleRate * 3.0;
+            const impulse = audioCtx.createBuffer(2, length, audioCtx.sampleRate);
+            for (let i = 0; i < 2; i++) {
+                const channel = impulse.getChannelData(i);
+                for (let j = 0; j < length; j++) {
+                    channel[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / length, 3.0);
+                }
+            }
+            const convolver = audioCtx.createConvolver();
+            convolver.buffer = impulse;
+            return convolver;
+        }
+
+        function initAudio() {
+            if (audioCtx) return;
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+            
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 0.28;
+
+            compressor = audioCtx.createDynamicsCompressor();
+            compressor.threshold.setValueAtTime(-25, audioCtx.currentTime);
+            compressor.ratio.setValueAtTime(6, audioCtx.currentTime);
+            compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+            compressor.release.setValueAtTime(0.05, audioCtx.currentTime);
+
+            reverbNode = createReverb();
+            const reverbGain = audioCtx.createGain();
+            reverbGain.gain.value = 0.45;
+
+            masterGain.connect(compressor);
+            compressor.connect(audioCtx.destination);
+            compressor.connect(reverbGain);
+            reverbGain.connect(reverbNode);
+            reverbNode.connect(audioCtx.destination);
+        }
+
+        function playTone(freq, velocity, pan, bodyId = null, enableBend = false) {
+            if (!audioCtx) return;
+            
+            // 同時発音数制限
+            if (activeVoices.length >= MAX_CONCURRENT_VOICES) {
+                const oldest = activeVoices.shift();
+                if (oldest && oldest.gain) {
+                    oldest.gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.05);
+                }
+            }
+
+            const now = audioCtx.currentTime;
+            
+            // 周波数に応じて音長を調整（高音は短く、低音は長く）
+            let duration;
+            if (freq > 1000) {
+                duration = 0.4 + velocity * 0.1; // 高音域は短い
+            } else if (freq > 500) {
+                duration = 0.8 + velocity * 0.2; // 中音域は中程度
+            } else {
+                duration = 1.5 + velocity * 0.4; // 低音域は長く響く
+            }
+            
+            const panner = audioCtx.createStereoPanner();
+            panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
+
+            const voiceGain = audioCtx.createGain();
+            voiceGain.gain.setValueAtTime(0, now);
+            
+            const volume = Math.min(0.08, (velocity * 0.01) + 0.015);
+            
+            // 高音はアタックも短く
+            const attackTime = freq > 1000 ? 0.01 : 0.03;
+            voiceGain.gain.linearRampToValueAtTime(volume, now + attackTime);
+            voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+            // ローパスフィルター追加（5.5〜6kHz）
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(5500 + Math.random() * 500, now);
+            filter.Q.setValueAtTime(0.7, now);
+
+            const voice = { gain: voiceGain, time: now };
+            activeVoices.push(voice);
+
+            const oscillators = [];
+            
+            // より爽やかで透明感のある音色 + デチューン
+            const detuneAmount = 4; // ±4 cent
+            [1, 2.001, 3.998, 6.002].forEach((h, i) => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                // 全てサイン波で透明感を重視
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq * h, now);
+                
+                // ±4 cent のデチューン
+                osc.detune.setValueAtTime((Math.random() - 0.5) * detuneAmount * 2, now);
+                
+                let harmonicVolume;
+                if (i === 0) {
+                    harmonicVolume = 1;
+                } else if (i === 1) {
+                    harmonicVolume = 0.3; // 2倍音を明るく
+                } else if (i === 2) {
+                    harmonicVolume = 0.15; // 4倍音でキラキラ感
+                } else {
+                    harmonicVolume = 0.08; // 6倍音で輝き
+                }
+                g.gain.setValueAtTime(harmonicVolume, now);
+                
+                osc.connect(g);
+                g.connect(filter); // フィルターを通す
+                
+                osc.start(now);
+                osc.stop(now + duration);
+                
+                oscillators.push({ osc, harmonic: h });
+            });
+
+            filter.connect(voiceGain);
+
+            voiceGain.connect(panner);
+            panner.connect(masterGain);
+
+            // ベンド可能な音の場合、オシレーターを保存
+            if (enableBend && bodyId !== null) {
+                proximityOscillators.set(bodyId, { oscillators, baseFreq: freq, stopTime: now + duration });
+            }
+
+            // クリーンアップ
+            setTimeout(() => {
+                const index = activeVoices.indexOf(voice);
+                if (index > -1) activeVoices.splice(index, 1);
+                if (bodyId !== null) proximityOscillators.delete(bodyId);
+            }, duration * 1000 + 100);
+        }
+
+        function initPhysics() {
+            engine = Engine.create();
+            engine.gravity.y = 0;
+
+            render = Render.create({
+                element: document.body,
+                engine: engine,
+                options: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    wireframes: false,
+                    background: 'transparent',
+                    pixelRatio: window.devicePixelRatio
+                }
+            });
+
+            createWalls();
+            
+            const mouse = Mouse.create(render.canvas);
+            const mouseConstraint = MouseConstraint.create(engine, {
+                mouse: mouse,
+                constraint: {
+                    stiffness: 0.1,
+                    render: { visible: false }
+                }
+            });
+            Composite.add(engine.world, mouseConstraint);
+
+            Render.run(render);
+            runner = Runner.create();
+            Runner.run(runner, engine);
+
+            Events.on(engine, 'collisionStart', (event) => {
+                event.pairs.forEach(pair => {
+                    const speed = Vector.magnitude(Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity));
+                    if (speed < 0.2) return;
+
+                    const collisionPoint = pair.collision.supports[0] || pair.bodyA.position;
+                    const pan = (collisionPoint.x / window.innerWidth) * 2 - 1;
+
+                    [pair.bodyA, pair.bodyB].forEach(body => {
+                        if (body.assignedFreq) {
+                            playTone(body.assignedFreq, speed, pan, body.id, true);
+                            createParticles(collisionPoint.x, collisionPoint.y, body.hue, speed);
+                            body.flash = 1.0;
+                        }
+                    });
+                });
+            });
+
+            Events.on(engine, 'beforeUpdate', () => {
+                const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+                
+                // アンビエントドローンの更新
+                updateAmbientDrone();
+                
+                // オブジェクト間の引力計算
+                for (let i = 0; i < bodies.length; i++) {
+                    for (let j = i + 1; j < bodies.length; j++) {
+                        const bodyA = bodies[i];
+                        const bodyB = bodies[j];
+                        const delta = Vector.sub(bodyB.position, bodyA.position);
+                        const distance = Vector.magnitude(delta);
+                        
+                        if (distance < ATTRACTION_RANGE && distance > 0) {
+                            const force = ATTRACTION_STRENGTH * (1 - distance / ATTRACTION_RANGE);
+                            const forceVector = Vector.mult(Vector.normalise(delta), force);
+                            
+                            Body.applyForce(bodyA, bodyA.position, forceVector);
+                            Body.applyForce(bodyB, bodyB.position, Vector.neg(forceVector));
+                            
+                            // 近接による音程ベンド効果
+                            const proximityFactor = 1 - (distance / ATTRACTION_RANGE);
+                            if (proximityFactor > 0.6) {
+                                applyFrequencyBend(bodyA, bodyB, proximityFactor);
+                            }
+                        }
+                    }
+                }
+                
+                bodies.forEach(body => {
+                    const speed = Vector.magnitude(body.velocity);
+                    
+                    // 速度制限
+                    if (speed > MAX_VELOCITY) {
+                        const scaled = Vector.mult(Vector.normalise(body.velocity), MAX_VELOCITY);
+                        Body.setVelocity(body, scaled);
+                    }
+                    
+                    // 速度がゼロに近づいたら再加速
+                    if (speed < 0.5) {
+                        const impulse = {
+                            x: (Math.random() - 0.5) * 0.15,
+                            y: (Math.random() - 0.5) * 0.15
+                        };
+                        Body.applyForce(body, body.position, impulse);
+                    }
+                    
+                    if (body.flash > 0) body.flash -= 0.05;
+                });
+                updateParticles();
+            });
+
+            Events.on(render, 'afterRender', () => {
+                const ctx = render.context;
+                
+                ctx.globalCompositeOperation = 'source-over';
+                
+                // 引力範囲内のオブジェクト間に接続線を描画
+                const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+                for (let i = 0; i < bodies.length; i++) {
+                    for (let j = i + 1; j < bodies.length; j++) {
+                        const bodyA = bodies[i];
+                        const bodyB = bodies[j];
+                        const distance = Vector.magnitude(Vector.sub(bodyB.position, bodyA.position));
+                        
+                        if (distance < ATTRACTION_RANGE) {
+                            const proximity = 1 - (distance / ATTRACTION_RANGE);
+                            const alpha = proximity * 0.15;
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(bodyA.position.x, bodyA.position.y);
+                            ctx.lineTo(bodyB.position.x, bodyB.position.y);
+                            
+                            const gradient = ctx.createLinearGradient(
+                                bodyA.position.x, bodyA.position.y,
+                                bodyB.position.x, bodyB.position.y
+                            );
+                            gradient.addColorStop(0, `hsla(${bodyA.hue}, 80%, 70%, ${alpha})`);
+                            gradient.addColorStop(1, `hsla(${bodyB.hue}, 80%, 70%, ${alpha})`);
+                            
+                            ctx.strokeStyle = gradient;
+                            ctx.lineWidth = proximity * 1.5;
+                            ctx.stroke();
+                        }
+                    }
+                }
+                
+                particles.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${p.h}, 100%, 80%, ${p.a})`;
+                    ctx.fill();
+                });
+
+                bodies.forEach(body => {
+                    const speed = Vector.magnitude(body.velocity);
+                    const flash = body.flash || 0;
+                    ctx.save();
+                    ctx.translate(body.position.x, body.position.y);
+                    ctx.rotate(body.angle);
+                    
+                    ctx.beginPath();
+                    ctx.arc(0, 0, body.circleRadius * (1.2 + flash * 0.5), 0, Math.PI * 2);
+                    ctx.shadowBlur = 10 + speed * 3 + flash * 20;
+                    ctx.shadowColor = `hsla(${body.hue}, 90%, 65%, ${0.3 + flash})`;
+                    ctx.strokeStyle = `hsla(${body.hue}, 100%, 85%, ${0.2 + flash})`;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `hsla(${body.hue}, 100%, 90%, ${0.8 + flash * 0.2})`;
+                    ctx.lineWidth = 2 + flash * 2;
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${body.hue}, 100%, 90%, ${0.5 + flash})`;
+                    ctx.fill();
+
+                    ctx.restore();
+                });
+            });
+
+            for(let i=0; i<6; i++) setTimeout(() => addCircle(), i * 200);
+        }
+
+        function createParticles(x, y, hue, speed) {
+            const count = Math.min(8, Math.floor(speed * 1.2));
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * speed * 0.5,
+                    vy: (Math.random() - 0.5) * speed * 0.5,
+                    r: Math.random() * 2 + 1,
+                    h: hue, a: 1.0, life: 1.0
+                });
+            }
+        }
+
+        function updateParticles() {
+            for(let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx; p.y += p.vy;
+                p.life -= 0.025;
+                p.a = Math.max(0, p.life);
+                if(p.life <= 0) particles.splice(i, 1);
+            }
+            if(particles.length > 100) particles.splice(0, particles.length - 100);
+        }
+
+        function createWalls() {
+            const thickness = 100;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            if (Object.keys(walls).length > 0) Composite.remove(engine.world, Object.values(walls));
+            const options = { isStatic: true, friction: 0, restitution: 1.0, render: { visible: false } };
+            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w, thickness, options);
+            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w, thickness, options);
+            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h, options);
+            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h, options);
+            Composite.add(engine.world, Object.values(walls));
+        }
+
+        function addCircle(x = window.innerWidth / 2, y = window.innerHeight / 2) {
+            const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+            if (bodies.length >= MAX_OBJECTS) {
+                let oldest = bodies[0];
+                Composite.remove(engine.world, oldest);
+            }
+
+            let freqIndex = Math.floor(Math.random() * SCALE.length);
+            
+            // 高音域（上位8音）の発音確率を大幅に下げる
+            if (freqIndex >= SCALE.length - 8) {
+                if (Math.random() > 0.3) { // 70%の確率でリロール
+                    freqIndex = Math.floor(Math.random() * (SCALE.length - 8));
+                }
+            }
+            
+            const hue = (freqIndex / SCALE.length) * 360;
+            const radius = 12 + Math.random() * 8;
+
+            const circle = Bodies.circle(x, y, radius, {
+                restitution: 1.0, friction: 0, frictionAir: 0.001,
+                render: { visible: false }
+            });
+            
+            circle.assignedFreq = SCALE[freqIndex];
+            circle.circleRadius = radius;
+            circle.hue = hue;
+            circle.flash = 0;
+            
+            Body.setVelocity(circle, { x: (Math.random()-0.5)*12, y: (Math.random()-0.5)*12 });
+            Composite.add(engine.world, circle);
+            updateStats();
+        }
+
+        function updateStats() {
+            const count = Composite.allBodies(engine.world).filter(b => !b.isStatic).length;
+            const statsEl = document.getElementById('stats');
+            if(statsEl) statsEl.innerText = `NODES: ${count} / ${MAX_OBJECTS}`;
+        }
+
+        function handleOrientation(event) {
+            if (!isStarted) return;
+            const b = event.beta; const g = event.gamma;
+            if (b !== null && g !== null) {
+                const targetX = Math.max(-1.2, Math.min(g * 0.04, 1.2));
+                const targetY = Math.max(-1.2, Math.min(b * 0.04, 1.2));
+                engine.gravity.x += (targetX - engine.gravity.x) * 0.1;
+                engine.gravity.y += (targetY - engine.gravity.y) * 0.1;
+            }
+        }
+
+        document.getElementById('start-btn').addEventListener('click', async () => {
+            initAudio();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+            playTone(SCALE[5], 4, 0);
+            
+            // アンビエントドローン開始
+            createAmbientDrone();
+
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const status = await DeviceOrientationEvent.requestPermission();
+                    if (status === 'granted') window.addEventListener('deviceorientation', handleOrientation, true);
+                } catch (e) { }
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation, true);
+            }
+
+            initPhysics();
+            isStarted = true;
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('ui-layer').style.display = 'flex';
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (!isStarted || e.target.closest('button')) return;
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const onUp = (upEvent) => {
+                const dist = Math.hypot(upEvent.clientX - startX, upEvent.clientY - startY);
+                if (dist < 5) addCircle(e.clientX, e.clientY);
+                window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mouseup', onUp);
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            if (!isStarted || e.target.closest('button')) return;
+            if (e.touches.length === 1) {
+                const touch = e.touches[0];
+                addCircle(touch.clientX, touch.clientY);
+            }
+        }, { passive: false });
+
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+            Composite.remove(engine.world, bodies);
+            particles = [];
+            updateStats();
+        });
+
+        window.addEventListener('resize', () => {
+            if (!render) return;
+            render.canvas.width = window.innerWidth;
+            render.canvas.height = window.innerHeight;
+            createWalls();
+        });
+    </script>
+</body>
+</html>
