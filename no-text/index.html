@@ -3,20 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Sensory Sound Box - Transparent Particles</title>
+    <title>Sensory Sound Box - Iconic Glow</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background: #020205;
+            background: #020204;
             touch-action: none;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: white;
             height: 100vh;
         }
         canvas { display: block; }
+        
         #ui-layer {
             position: fixed;
             top: 0;
@@ -27,90 +28,100 @@
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            padding: env(safe-area-inset-top, 20px) 20px env(safe-area-inset-bottom, 20px) 20px;
+            padding: env(safe-area-inset-top, 24px) 24px env(safe-area-inset-bottom, 24px) 24px;
             z-index: 10;
         }
+
         .glass-btn {
             pointer-events: auto;
-            background: rgba(255, 255, 255, 0.02);
+            background: rgba(255, 255, 255, 0.03);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 14px 32px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 28px;
             border-radius: 100px;
-            font-size: 11px;
-            letter-spacing: 0.4em;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.3em;
             text-transform: uppercase;
-            transition: all 0.4s cubic-bezier(0.2, 1, 0.3, 1);
+            color: rgba(255, 255, 255, 0.7);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
         }
+
         .glass-btn:active {
-            transform: scale(0.95);
-            background: rgba(255, 255, 255, 0.12);
+            transform: scale(0.96);
+            background: rgba(255, 255, 255, 0.1);
         }
+
         #start-overlay {
             position: fixed;
             inset: 0;
-            background: #020205;
+            background: #020204;
             z-index: 100;
             display: flex;
             align-items: center;
             justify-content: center;
             flex-direction: column;
-            gap: 24px;
+            gap: 32px;
         }
+
+        .luminous-text {
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+        }
+
         .hint {
             font-size: 10px;
             opacity: 0.3;
             text-align: center;
-            line-height: 2.5;
-            letter-spacing: 0.3em;
+            line-height: 2.2;
+            letter-spacing: 0.4em;
         }
     </style>
 </head>
 <body>
 
     <div id="start-overlay">
-        <button id="start-btn" class="glass-btn">START RESONANCE</button>
-        <p class="hint">TRANSPARENT GLASS MODE<br>PARTICLE COLLISION EFFECTS</p>
+        <h2 class="text-[11px] tracking-[1.2em] opacity-60 uppercase luminous-text">Linear Resonance</h2>
+        <button id="start-btn" class="glass-btn px-10 py-5">Initiate</button>
+        <p class="hint">ICONIC MINIMAL DESIGN<br>REFINED CRYSTAL AUDIO</p>
     </div>
 
     <div id="ui-layer" style="display: none;">
         <div class="flex justify-between items-start">
-            <div>
-                <h1 class="text-[10px] font-bold tracking-[0.7em] opacity-50 uppercase">Ethereal Sound Box</h1>
-                <p id="stats" class="text-[9px] opacity-20 mt-1 tracking-[0.5em]">NODES: 0 / 25</p>
+            <div class="opacity-50 pl-4">
+                <h1 class="text-[9px] font-bold tracking-[0.6em] uppercase">Visual Field</h1>
+                <p id="stats" class="text-[8px] mt-2 tracking-[0.4em]">NODES: 0 / 25</p>
             </div>
-            <button id="clear-btn" class="glass-btn py-2 px-6">Reset</button>
+            <button id="clear-btn" class="glass-btn">Reset</button>
         </div>
     </div>
 
     <script>
         const { Engine, Render, Runner, Bodies, Composite, Vector, Body, Events } = Matter;
 
-        let engine, render, runner, audioCtx, masterGain, compressor, limiter, reverbWet;
+        let engine, render, runner, audioCtx, masterGain, compressor, reverbNode;
         let isStarted = false;
         let walls = {};
         const MAX_OBJECTS = 25; 
-        const MAX_VELOCITY = 15;
+        const MAX_VELOCITY = 10;
         let particles = [];
+        let lastCollisionTime = 0;
 
+        // Pentatonic Scale for harmonious sounds
         const SCALE = [
-            32.70, 36.71, 41.20, 43.65, 49.00, 55.00, 61.74, 
-            65.41, 73.42, 82.41, 87.31, 98.00, 110.00, 123.47, 
-            130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 
-            261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 
-            523.25 
+            130.81, 146.83, 164.81, 196.00, 220.00,
+            261.63, 293.66, 329.63, 392.00, 440.00,
+            523.25, 587.33, 659.25, 783.99, 880.00,
+            1046.50
         ];
 
-        const voicePool = new Map();
-
         function createReverb() {
-            const length = audioCtx.sampleRate * 6.0; 
+            const length = audioCtx.sampleRate * 2.5;
             const impulse = audioCtx.createBuffer(2, length, audioCtx.sampleRate);
             for (let i = 0; i < 2; i++) {
                 const channel = impulse.getChannelData(i);
                 for (let j = 0; j < length; j++) {
-                    channel[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / length, 5.0);
+                    channel[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / length, 2.5);
                 }
             }
             const convolver = audioCtx.createConvolver();
@@ -119,47 +130,81 @@
         }
 
         function initAudio() {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx) return;
+
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+            
             masterGain = audioCtx.createGain();
             masterGain.gain.value = 0.5;
 
             compressor = audioCtx.createDynamicsCompressor();
-            compressor.threshold.setValueAtTime(-24, audioCtx.currentTime); 
+            compressor.threshold.setValueAtTime(-20, audioCtx.currentTime);
+            compressor.knee.setValueAtTime(30, audioCtx.currentTime);
             compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+            compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+            compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
 
-            limiter = audioCtx.createDynamicsCompressor();
-            limiter.threshold.setValueAtTime(-0.5, audioCtx.currentTime);
-            
-            const reverbNode = createReverb();
-            reverbWet = audioCtx.createGain();
-            reverbWet.gain.value = 0.6; 
-            
+            reverbNode = createReverb();
+            const reverbGain = audioCtx.createGain();
+            reverbGain.gain.value = 0.25;
+
             masterGain.connect(compressor);
-            compressor.connect(limiter);
-            limiter.connect(audioCtx.destination);
-            limiter.connect(reverbWet);
-            reverbWet.connect(reverbNode);
+            compressor.connect(audioCtx.destination);
+            
+            compressor.connect(reverbGain);
+            reverbGain.connect(reverbNode);
             reverbNode.connect(audioCtx.destination);
+        }
 
-            SCALE.forEach(freq => {
-                const vGain = audioCtx.createGain();
-                vGain.gain.value = 0;
-                const vFilter = audioCtx.createBiquadFilter();
-                vFilter.type = 'lowpass';
-                vFilter.frequency.value = 2000;
+        /**
+         * New Sound Engine: Additive Synthesis with ADSR
+         */
+        function playTone(freq, velocity, pan) {
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const now = audioCtx.currentTime;
+            const duration = 0.5 + velocity * 0.1;
+            
+            // Panner for spatial sound
+            const panner = audioCtx.createStereoPanner();
+            panner.pan.setValueAtTime(pan, now);
+
+            const voiceGain = audioCtx.createGain();
+            voiceGain.gain.setValueAtTime(0, now);
+            
+            // Envelope (ADSR)
+            const volume = Math.min(0.2, (velocity * 0.02) + 0.05);
+            voiceGain.gain.linearRampToValueAtTime(volume, now + 0.005);
+            voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+            // Harmonics for a richer, glass-like tone
+            const harmonics = [1, 2.01, 3.02, 4.04];
+            const weights = [1, 0.4, 0.2, 0.1];
+
+            harmonics.forEach((h, i) => {
                 const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                
                 osc.type = 'sine';
-                osc.frequency.value = freq;
-                osc.connect(vGain);
-                vGain.connect(vFilter);
-                vFilter.connect(masterGain);
-                osc.start();
-                voicePool.set(freq, { vGain, vFilter });
+                osc.frequency.setValueAtTime(freq * h, now);
+                
+                g.gain.setValueAtTime(weights[i], now);
+                
+                osc.connect(g);
+                g.connect(voiceGain);
+                
+                osc.start(now);
+                osc.stop(now + duration);
             });
+
+            voiceGain.connect(panner);
+            panner.connect(masterGain);
         }
 
         function initPhysics() {
-            engine = Engine.create({ positionIterations: 10, velocityIterations: 10 });
+            engine = Engine.create();
             engine.gravity.y = 0;
 
             render = Render.create({
@@ -176,19 +221,21 @@
 
             createWalls();
             Render.run(render);
-            runner = Runner.create({ isFixed: true, delta: 1000 / 60 });
+            runner = Runner.create();
             Runner.run(runner, engine);
 
             Events.on(engine, 'collisionStart', (event) => {
                 event.pairs.forEach(pair => {
                     const speed = Vector.magnitude(Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity));
-                    if (speed < 0.2) return;
+                    if (speed < 0.1) return;
 
                     const collisionPoint = pair.collision.supports[0] || pair.bodyA.position;
+                    // Calculate pan based on screen position (-1 to 1)
+                    const pan = (collisionPoint.x / window.innerWidth) * 2 - 1;
 
                     [pair.bodyA, pair.bodyB].forEach(body => {
                         if (body.assignedFreq) {
-                            triggerResonance(body.assignedFreq, speed, body.circleRadius);
+                            playTone(body.assignedFreq, speed, pan);
                             createParticles(collisionPoint.x, collisionPoint.y, body.hue, speed);
                         }
                     });
@@ -206,97 +253,99 @@
                 updateParticles();
             });
 
-            // Custom draw layer for particles
             Events.on(render, 'afterRender', () => {
                 const ctx = render.context;
                 particles.forEach(p => {
+                    ctx.save();
                     ctx.beginPath();
                     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
                     ctx.fillStyle = `hsla(${p.h}, 100%, 80%, ${p.a})`;
                     ctx.fill();
+                    ctx.restore();
+                });
+
+                const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
+                bodies.forEach(body => {
+                    const speed = Vector.magnitude(body.velocity);
+                    ctx.save();
+                    ctx.translate(body.position.x, body.position.y);
+                    ctx.rotate(body.angle);
+                    
+                    // Outer glow
+                    ctx.beginPath();
+                    ctx.arc(0, 0, body.circleRadius * 1.2, 0, Math.PI * 2);
+                    ctx.shadowBlur = 15 + speed * 2;
+                    ctx.shadowColor = `hsla(${body.hue}, 90%, 65%, 0.5)`;
+                    ctx.strokeStyle = `hsla(${body.hue}, 100%, 80%, 0.2)`;
+                    ctx.stroke();
+
+                    // Inner circle
+                    ctx.beginPath();
+                    ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `hsla(${body.hue}, 100%, 90%, 0.9)`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
                 });
             });
 
-            for(let i=0; i<8; i++) setTimeout(() => addCircle(), i * 200);
+            for(let i=0; i<8; i++) setTimeout(() => addCircle(), i * 150);
         }
 
         function createParticles(x, y, hue, speed) {
-            const count = Math.floor(speed * 3);
+            const count = Math.min(6, Math.floor(speed * 0.8));
             for(let i=0; i<count; i++) {
                 particles.push({
-                    x: x,
-                    y: y,
-                    vx: (Math.random() - 0.5) * speed * 0.8,
-                    vy: (Math.random() - 0.5) * speed * 0.8,
-                    r: Math.random() * 1.5 + 0.5,
-                    h: hue,
-                    a: 0.8,
-                    life: 1.0
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * speed * 0.3,
+                    vy: (Math.random() - 0.5) * speed * 0.3,
+                    r: Math.random() * 2 + 0.5,
+                    h: hue, a: 1.0, life: 1.0
                 });
             }
-            if(particles.length > 200) particles.splice(0, particles.length - 200);
+            if(particles.length > 60) particles.shift();
         }
 
         function updateParticles() {
             for(let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
-                p.x += p.vx;
-                p.y += p.vy;
+                p.x += p.vx; p.y += p.vy;
                 p.life -= 0.02;
-                p.a = p.life;
+                p.a = Math.max(0, p.life);
                 if(p.life <= 0) particles.splice(i, 1);
             }
         }
 
-        function triggerResonance(freq, speed, radius) {
-            const vol = Math.min(0.3, speed * 0.04);
-            const voice = voicePool.get(freq);
-            if (!voice) return;
-            const now = audioCtx.currentTime;
-            voice.vFilter.frequency.setTargetAtTime(600 + speed * 1500, now, 0.05);
-            voice.vGain.gain.cancelScheduledValues(now);
-            voice.vGain.gain.setValueAtTime(voice.vGain.gain.value, now);
-            voice.vGain.gain.linearRampToValueAtTime(vol, now + 0.015); 
-            voice.vGain.gain.setTargetAtTime(0, now + 0.03, 0.5 + (radius || 15)/60);
-        }
-
         function createWalls() {
-            const thickness = 600;
+            const thickness = 100;
             const w = window.innerWidth;
             const h = window.innerHeight;
             if (Object.keys(walls).length > 0) Composite.remove(engine.world, Object.values(walls));
-            const options = { isStatic: true, friction: 0, restitution: 1.2, render: { visible: false } };
-            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w + thickness * 2, thickness, options);
-            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w + thickness * 2, thickness, options);
-            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h + thickness * 2, options);
-            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h + thickness * 2, options);
+            const options = { isStatic: true, friction: 0, restitution: 1.0, render: { visible: false } };
+            walls.top = Bodies.rectangle(w / 2, -thickness / 2, w, thickness, options);
+            walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w, thickness, options);
+            walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h, options);
+            walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h, options);
             Composite.add(engine.world, Object.values(walls));
         }
 
         function addCircle(x = window.innerWidth / 2, y = window.innerHeight / 2) {
             const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
             if (bodies.length >= MAX_OBJECTS) {
-                let candidate = bodies.reduce((prev, curr) => Vector.magnitude(curr.velocity) < Vector.magnitude(prev.velocity) ? curr : prev);
-                Composite.remove(engine.world, candidate);
+                let slowest = bodies.reduce((prev, curr) => Vector.magnitude(curr.velocity) < Vector.magnitude(prev.velocity) ? curr : prev);
+                Composite.remove(engine.world, slowest);
             }
 
             const freqIndex = Math.floor(Math.random() * SCALE.length);
-            const assignedFreq = SCALE[freqIndex];
-            const hue = Math.floor((freqIndex / SCALE.length) * 320); 
-            const radius = 10 + Math.random() * 15;
+            const hue = (freqIndex / SCALE.length) * 360;
+            const radius = 14 + Math.random() * 6;
 
             const circle = Bodies.circle(x, y, radius, {
-                restitution: 1.15, 
-                friction: 0,
-                frictionAir: 0.002,
-                render: { 
-                    fillStyle: `hsla(${hue}, 60%, 50%, 0.25)`, // High transparency
-                    strokeStyle: `hsla(${hue}, 80%, 70%, 0.5)`,
-                    lineWidth: 1.5
-                }
+                restitution: 1.0, friction: 0, frictionAir: 0.002,
+                render: { visible: false }
             });
             
-            circle.assignedFreq = assignedFreq;
+            circle.assignedFreq = SCALE[freqIndex];
             circle.circleRadius = radius;
             circle.hue = hue;
             
@@ -307,21 +356,26 @@
 
         function updateStats() {
             const count = Composite.allBodies(engine.world).filter(b => !b.isStatic).length;
-            document.getElementById('stats').innerText = `ETHEREAL NODES: ${count} / ${MAX_OBJECTS}`;
+            const statsEl = document.getElementById('stats');
+            if(statsEl) statsEl.innerText = `NODES: ${count} / ${MAX_OBJECTS}`;
         }
 
         function handleOrientation(event) {
             if (!isStarted) return;
-            const b = event.beta; 
-            const g = event.gamma;
+            const b = event.beta; const g = event.gamma;
             if (b !== null && g !== null) {
-                engine.gravity.x = Math.max(-5, Math.min(g * 0.2, 5));
-                engine.gravity.y = Math.max(-5, Math.min(b * 0.2, 5));
+                engine.gravity.x = Math.max(-1.5, Math.min(g * 0.05, 1.5));
+                engine.gravity.y = Math.max(-1.5, Math.min(b * 0.05, 1.5));
             }
         }
 
         document.getElementById('start-btn').addEventListener('click', async () => {
             initAudio();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+            // Initial ping to confirm sound
+            playTone(440, 5, 0);
+
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
                     const status = await DeviceOrientationEvent.requestPermission();
@@ -330,6 +384,7 @@
             } else {
                 window.addEventListener('deviceorientation', handleOrientation, true);
             }
+
             initPhysics();
             isStarted = true;
             document.getElementById('start-overlay').style.display = 'none';
