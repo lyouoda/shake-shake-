@@ -104,9 +104,7 @@
         let walls = {};
         const MAX_OBJECTS = 30; 
         const MAX_VELOCITY = 15;
-        const MAX_CONCURRENT_VOICES = 8;
         let particles = [];
-        let activeVoices = [];
 
         const SCALE = [
             130.81, 146.83, 164.81, 196.00, 220.00,
@@ -135,17 +133,15 @@
             audioCtx = new AudioContextClass();
             
             masterGain = audioCtx.createGain();
-            masterGain.gain.value = 0.25;
+            masterGain.gain.value = 0.4;
 
             compressor = audioCtx.createDynamicsCompressor();
-            compressor.threshold.setValueAtTime(-25, audioCtx.currentTime);
-            compressor.ratio.setValueAtTime(6, audioCtx.currentTime);
-            compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
-            compressor.release.setValueAtTime(0.05, audioCtx.currentTime);
+            compressor.threshold.setValueAtTime(-15, audioCtx.currentTime);
+            compressor.ratio.setValueAtTime(4, audioCtx.currentTime);
 
             reverbNode = createReverb();
             const reverbGain = audioCtx.createGain();
-            reverbGain.gain.value = 0.2;
+            reverbGain.gain.value = 0.35;
 
             masterGain.connect(compressor);
             compressor.connect(audioCtx.destination);
@@ -156,17 +152,8 @@
 
         function playTone(freq, velocity, pan) {
             if (!audioCtx) return;
-            
-            // 同時発音数制限
-            if (activeVoices.length >= MAX_CONCURRENT_VOICES) {
-                const oldest = activeVoices.shift();
-                if (oldest && oldest.gain) {
-                    oldest.gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.05);
-                }
-            }
-
             const now = audioCtx.currentTime;
-            const duration = 0.8 + velocity * 0.15;
+            const duration = 0.8 + velocity * 0.2;
             
             const panner = audioCtx.createStereoPanner();
             panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
@@ -174,27 +161,18 @@
             const voiceGain = audioCtx.createGain();
             voiceGain.gain.setValueAtTime(0, now);
             
-            const volume = Math.min(0.08, (velocity * 0.01) + 0.015);
+            const volume = Math.min(0.15, (velocity * 0.015) + 0.02);
             voiceGain.gain.linearRampToValueAtTime(volume, now + 0.01);
             voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-            const voice = { gain: voiceGain, time: now };
-            activeVoices.push(voice);
-
-            // アディティブ・シンセシス: より控えめな倍音構成
+            // アディティブ・シンセシス: クリスタル・トーン
             [1, 2.001, 3.002, 5.003].forEach((h, i) => {
                 const osc = audioCtx.createOscillator();
                 const g = audioCtx.createGain();
                 osc.type = i === 0 ? 'sine' : 'triangle';
                 osc.frequency.setValueAtTime(freq * h, now);
-                
-                let harmonicVolume;
-                if (i === 0) {
-                    harmonicVolume = 1;
-                } else {
-                    harmonicVolume = (0.2 / i) * Math.min(1, velocity / 8);
-                }
-                g.gain.setValueAtTime(harmonicVolume, now);
+                // 速度が速いほど高い倍音が響く
+                g.gain.setValueAtTime(i === 0 ? 1 : (0.3 / i) * (velocity / 5), now);
                 
                 osc.connect(g);
                 g.connect(voiceGain);
@@ -204,12 +182,6 @@
 
             voiceGain.connect(panner);
             panner.connect(masterGain);
-
-            // クリーンアップ
-            setTimeout(() => {
-                const index = activeVoices.indexOf(voice);
-                if (index > -1) activeVoices.splice(index, 1);
-            }, duration * 1000 + 100);
         }
 
         function initPhysics() {
@@ -230,6 +202,7 @@
 
             createWalls();
             
+            // マウス/タッチ拘束の追加
             const mouse = Mouse.create(render.canvas);
             const mouseConstraint = MouseConstraint.create(engine, {
                 mouse: mouse,
@@ -256,7 +229,7 @@
                         if (body.assignedFreq) {
                             playTone(body.assignedFreq, speed, pan);
                             createParticles(collisionPoint.x, collisionPoint.y, body.hue, speed);
-                            body.flash = 1.0;
+                            body.flash = 1.0; // 発光フラグ
                         }
                     });
                 });
@@ -274,9 +247,11 @@
                 updateParticles();
             });
 
+            // カスタム描画レイヤー
             Events.on(render, 'afterRender', () => {
                 const ctx = render.context;
                 
+                // 残像エフェクト: 前のフレームを少し残す
                 ctx.globalCompositeOperation = 'source-over';
                 
                 particles.forEach(p => {
@@ -294,6 +269,7 @@
                     ctx.translate(body.position.x, body.position.y);
                     ctx.rotate(body.angle);
                     
+                    // 光輪
                     ctx.beginPath();
                     ctx.arc(0, 0, body.circleRadius * (1.2 + flash * 0.5), 0, Math.PI * 2);
                     ctx.shadowBlur = 10 + speed * 3 + flash * 20;
@@ -302,12 +278,14 @@
                     ctx.lineWidth = 1;
                     ctx.stroke();
 
+                    // メイン円
                     ctx.beginPath();
                     ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2);
                     ctx.strokeStyle = `hsla(${body.hue}, 100%, 90%, ${0.8 + flash * 0.2})`;
                     ctx.lineWidth = 2 + flash * 2;
                     ctx.stroke();
                     
+                    // センタードット
                     ctx.beginPath();
                     ctx.arc(0, 0, 2, 0, Math.PI * 2);
                     ctx.fillStyle = `hsla(${body.hue}, 100%, 90%, ${0.5 + flash})`;
@@ -393,6 +371,7 @@
             if (!isStarted) return;
             const b = event.beta; const g = event.gamma;
             if (b !== null && g !== null) {
+                // スムーズな重力移動
                 const targetX = Math.max(-1.2, Math.min(g * 0.04, 1.2));
                 const targetY = Math.max(-1.2, Math.min(b * 0.04, 1.2));
                 engine.gravity.x += (targetX - engine.gravity.x) * 0.1;
@@ -420,8 +399,10 @@
             document.getElementById('ui-layer').style.display = 'flex';
         });
 
+        // 画面クリックで追加（ボタン以外）
         window.addEventListener('mousedown', (e) => {
             if (!isStarted || e.target.closest('button')) return;
+            // 短いクリックの場合のみ追加（ドラッグと区別）
             const startX = e.clientX;
             const startY = e.clientY;
             const onUp = (upEvent) => {
@@ -432,6 +413,7 @@
             window.addEventListener('mouseup', onUp);
         });
 
+        // タッチ対応
         window.addEventListener('touchstart', (e) => {
             if (!isStarted || e.target.closest('button')) return;
             if (e.touches.length === 1) {
