@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Sensory Sound Box - High Precision</title>
+    <title>Sensory Sound Box - Transparent Particles</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background: #050507;
+            background: #020205;
             touch-action: none;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: white;
@@ -32,25 +32,25 @@
         }
         .glass-btn {
             pointer-events: auto;
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.02);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 14px 32px;
             border-radius: 100px;
             font-size: 11px;
-            letter-spacing: 0.15em;
+            letter-spacing: 0.4em;
             text-transform: uppercase;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.4s cubic-bezier(0.2, 1, 0.3, 1);
         }
         .glass-btn:active {
-            transform: scale(0.92);
-            background: rgba(255, 255, 255, 0.15);
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.12);
         }
         #start-overlay {
             position: fixed;
             inset: 0;
-            background: #050507;
+            background: #020205;
             z-index: 100;
             display: flex;
             align-items: center;
@@ -59,39 +59,26 @@
             gap: 24px;
         }
         .hint {
-            font-size: 11px;
-            opacity: 0.4;
+            font-size: 10px;
+            opacity: 0.3;
             text-align: center;
-            line-height: 2;
-            letter-spacing: 0.05em;
-        }
-        #debug-info {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            font-size: 8px;
-            font-family: monospace;
-            color: #4ade80;
-            pointer-events: none;
-            z-index: 20;
-            opacity: 0.4;
+            line-height: 2.5;
+            letter-spacing: 0.3em;
         }
     </style>
 </head>
 <body>
 
     <div id="start-overlay">
-        <button id="start-btn" class="glass-btn">START EXPERIENCE</button>
-        <p class="hint">TILT & SHAKE FREELY<br>REINFORCED BOUNDARIES | STABLE PHYSICS</p>
+        <button id="start-btn" class="glass-btn">START RESONANCE</button>
+        <p class="hint">TRANSPARENT GLASS MODE<br>PARTICLE COLLISION EFFECTS</p>
     </div>
-
-    <div id="debug-info">SYSTEM: STANDBY</div>
 
     <div id="ui-layer" style="display: none;">
         <div class="flex justify-between items-start">
             <div>
-                <h1 class="text-[10px] font-medium tracking-[0.3em] opacity-60 uppercase">Robust Physics Engine</h1>
-                <p id="stats" class="text-[9px] opacity-30 mt-1 tracking-widest">NODES: 0 / 25</p>
+                <h1 class="text-[10px] font-bold tracking-[0.7em] opacity-50 uppercase">Ethereal Sound Box</h1>
+                <p id="stats" class="text-[9px] opacity-20 mt-1 tracking-[0.5em]">NODES: 0 / 25</p>
             </div>
             <button id="clear-btn" class="glass-btn py-2 px-6">Reset</button>
         </div>
@@ -100,27 +87,30 @@
     <script>
         const { Engine, Render, Runner, Bodies, Composite, Vector, Body, Events } = Matter;
 
-        let engine, render, runner, audioCtx, masterGain, compressor, limiter, reverbNode, delayNode, delayGain;
+        let engine, render, runner, audioCtx, masterGain, compressor, limiter, reverbWet;
         let isStarted = false;
         let walls = {};
         const MAX_OBJECTS = 25; 
-        const MAX_POLYPHONY_PER_FRAME = 5;
-        const MAX_VELOCITY = 25; // Speed limit to prevent tunneling
-        const debug = document.getElementById('debug-info');
+        const MAX_VELOCITY = 15;
+        let particles = [];
 
-        const C_MAJOR_SCALE = [
-            130.81, 164.81, 196.00, 261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50
+        const SCALE = [
+            32.70, 36.71, 41.20, 43.65, 49.00, 55.00, 61.74, 
+            65.41, 73.42, 82.41, 87.31, 98.00, 110.00, 123.47, 
+            130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 
+            261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 
+            523.25 
         ];
 
         const voicePool = new Map();
 
         function createReverb() {
-            const length = audioCtx.sampleRate * 2.2; 
+            const length = audioCtx.sampleRate * 6.0; 
             const impulse = audioCtx.createBuffer(2, length, audioCtx.sampleRate);
             for (let i = 0; i < 2; i++) {
                 const channel = impulse.getChannelData(i);
                 for (let j = 0; j < length; j++) {
-                    channel[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / length, 3.5);
+                    channel[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / length, 5.0);
                 }
             }
             const convolver = audioCtx.createConvolver();
@@ -130,69 +120,46 @@
 
         function initAudio() {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            
             masterGain = audioCtx.createGain();
             masterGain.gain.value = 0.5;
 
             compressor = audioCtx.createDynamicsCompressor();
-            compressor.threshold.setValueAtTime(-15, audioCtx.currentTime); 
-            compressor.ratio.setValueAtTime(4, audioCtx.currentTime);
+            compressor.threshold.setValueAtTime(-24, audioCtx.currentTime); 
+            compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
 
             limiter = audioCtx.createDynamicsCompressor();
-            limiter.threshold.setValueAtTime(-0.1, audioCtx.currentTime);
-            limiter.ratio.setValueAtTime(20, audioCtx.currentTime);
-            limiter.attack.setValueAtTime(0.001, audioCtx.currentTime);
+            limiter.threshold.setValueAtTime(-0.5, audioCtx.currentTime);
             
-            delayNode = audioCtx.createDelay();
-            delayNode.delayTime.value = 0.4; 
-            delayGain = audioCtx.createGain();
-            delayGain.gain.value = 0.2; 
-            delayNode.connect(delayGain);
-            delayGain.connect(delayNode);
-            
-            reverbNode = createReverb();
+            const reverbNode = createReverb();
+            reverbWet = audioCtx.createGain();
+            reverbWet.gain.value = 0.6; 
             
             masterGain.connect(compressor);
             compressor.connect(limiter);
-            limiter.connect(reverbNode);
-            limiter.connect(delayNode);
-            delayNode.connect(reverbNode);
+            limiter.connect(audioCtx.destination);
+            limiter.connect(reverbWet);
+            reverbWet.connect(reverbNode);
             reverbNode.connect(audioCtx.destination);
 
-            C_MAJOR_SCALE.forEach(freq => {
+            SCALE.forEach(freq => {
                 const vGain = audioCtx.createGain();
                 vGain.gain.value = 0;
                 const vFilter = audioCtx.createBiquadFilter();
                 vFilter.type = 'lowpass';
-                vFilter.frequency.value = 20000;
-                const osc1 = audioCtx.createOscillator();
-                osc1.type = 'sine';
-                osc1.frequency.value = freq;
-                const osc2 = audioCtx.createOscillator();
-                osc2.type = 'triangle';
-                osc2.frequency.value = freq * 1.002;
-                const subGain = audioCtx.createGain();
-                subGain.gain.value = 0.25;
-                osc1.connect(vGain);
-                osc2.connect(subGain);
-                subGain.connect(vGain);
+                vFilter.frequency.value = 2000;
+                const osc = audioCtx.createOscillator();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                osc.connect(vGain);
                 vGain.connect(vFilter);
                 vFilter.connect(masterGain);
-                osc1.start();
-                osc2.start();
+                osc.start();
                 voicePool.set(freq, { vGain, vFilter });
             });
-            
-            if (audioCtx.state === 'suspended') audioCtx.resume();
         }
 
         function initPhysics() {
-            // Increase precision: More iterations to prevent tunneling
-            engine = Engine.create({
-                positionIterations: 10,
-                velocityIterations: 10,
-                constraintIterations: 2
-            });
+            engine = Engine.create({ positionIterations: 10, velocityIterations: 10 });
             engine.gravity.y = 0;
 
             render = Render.create({
@@ -209,118 +176,138 @@
 
             createWalls();
             Render.run(render);
-            
-            // Substepping: Higher physics frequency (delta)
-            runner = Runner.create({ isFixed: true, delta: 1000 / 120 });
+            runner = Runner.create({ isFixed: true, delta: 1000 / 60 });
             Runner.run(runner, engine);
 
             Events.on(engine, 'collisionStart', (event) => {
-                const pairs = event.pairs
-                    .map(pair => {
-                        const speed = Vector.magnitude(Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity));
-                        const target = pair.bodyA.isStatic ? pair.bodyB : pair.bodyA;
-                        return { target, speed, vol: Math.min(0.4, speed * 0.025) };
-                    })
-                    .filter(p => p.speed > 0.4 && p.target.freq)
-                    .sort((a, b) => b.vol - a.vol);
+                event.pairs.forEach(pair => {
+                    const speed = Vector.magnitude(Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity));
+                    if (speed < 0.2) return;
 
-                pairs.slice(0, MAX_POLYPHONY_PER_FRAME).forEach(p => {
-                    triggerVoice(p.target.freq, p.vol, p.target.radius, p.speed);
+                    const collisionPoint = pair.collision.supports[0] || pair.bodyA.position;
+
+                    [pair.bodyA, pair.bodyB].forEach(body => {
+                        if (body.assignedFreq) {
+                            triggerResonance(body.assignedFreq, speed, body.circleRadius);
+                            createParticles(collisionPoint.x, collisionPoint.y, body.hue, speed);
+                        }
+                    });
                 });
             });
 
-            // Prevent objects from moving too fast
             Events.on(engine, 'beforeUpdate', () => {
-                const bodies = Composite.allBodies(engine.world);
+                const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
                 bodies.forEach(body => {
-                    if (body.isStatic) return;
-                    if (body.velocity.x > MAX_VELOCITY) Body.setVelocity(body, { x: MAX_VELOCITY, y: body.velocity.y });
-                    if (body.velocity.x < -MAX_VELOCITY) Body.setVelocity(body, { x: -MAX_VELOCITY, y: body.velocity.y });
-                    if (body.velocity.y > MAX_VELOCITY) Body.setVelocity(body, { x: body.velocity.x, y: MAX_VELOCITY });
-                    if (body.velocity.y < -MAX_VELOCITY) Body.setVelocity(body, { x: body.velocity.x, y: -MAX_VELOCITY });
+                    if (Vector.magnitude(body.velocity) > MAX_VELOCITY) {
+                        const scaled = Vector.mult(Vector.normalise(body.velocity), MAX_VELOCITY);
+                        Body.setVelocity(body, scaled);
+                    }
+                });
+                updateParticles();
+            });
+
+            // Custom draw layer for particles
+            Events.on(render, 'afterRender', () => {
+                const ctx = render.context;
+                particles.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsla(${p.h}, 100%, 80%, ${p.a})`;
+                    ctx.fill();
                 });
             });
 
-            for(let i=0; i<8; i++) {
-                setTimeout(() => addCircle(), i * 150);
+            for(let i=0; i<8; i++) setTimeout(() => addCircle(), i * 200);
+        }
+
+        function createParticles(x, y, hue, speed) {
+            const count = Math.floor(speed * 3);
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * speed * 0.8,
+                    vy: (Math.random() - 0.5) * speed * 0.8,
+                    r: Math.random() * 1.5 + 0.5,
+                    h: hue,
+                    a: 0.8,
+                    life: 1.0
+                });
+            }
+            if(particles.length > 200) particles.splice(0, particles.length - 200);
+        }
+
+        function updateParticles() {
+            for(let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                p.a = p.life;
+                if(p.life <= 0) particles.splice(i, 1);
             }
         }
 
+        function triggerResonance(freq, speed, radius) {
+            const vol = Math.min(0.3, speed * 0.04);
+            const voice = voicePool.get(freq);
+            if (!voice) return;
+            const now = audioCtx.currentTime;
+            voice.vFilter.frequency.setTargetAtTime(600 + speed * 1500, now, 0.05);
+            voice.vGain.gain.cancelScheduledValues(now);
+            voice.vGain.gain.setValueAtTime(voice.vGain.gain.value, now);
+            voice.vGain.gain.linearRampToValueAtTime(vol, now + 0.015); 
+            voice.vGain.gain.setTargetAtTime(0, now + 0.03, 0.5 + (radius || 15)/60);
+        }
+
         function createWalls() {
-            const thickness = 500; // Super thick walls to prevent tunneling
+            const thickness = 600;
             const w = window.innerWidth;
             const h = window.innerHeight;
             if (Object.keys(walls).length > 0) Composite.remove(engine.world, Object.values(walls));
-            
-            const options = { isStatic: true, friction: 0.02, restitution: 1.0 };
-            
-            // Placing walls so only their edges align with screen boundaries
+            const options = { isStatic: true, friction: 0, restitution: 1.2, render: { visible: false } };
             walls.top = Bodies.rectangle(w / 2, -thickness / 2, w + thickness * 2, thickness, options);
             walls.bottom = Bodies.rectangle(w / 2, h + thickness / 2, w + thickness * 2, thickness, options);
             walls.left = Bodies.rectangle(-thickness / 2, h / 2, thickness, h + thickness * 2, options);
             walls.right = Bodies.rectangle(w + thickness / 2, h / 2, thickness, h + thickness * 2, options);
-            
             Composite.add(engine.world, Object.values(walls));
         }
 
         function addCircle(x = window.innerWidth / 2, y = window.innerHeight / 2) {
             const bodies = Composite.allBodies(engine.world).filter(b => !b.isStatic);
-            
             if (bodies.length >= MAX_OBJECTS) {
-                let candidate = bodies.reduce((prev, curr) => {
-                    const v1 = Vector.magnitude(curr.velocity);
-                    const v2 = Vector.magnitude(prev.velocity);
-                    return v1 < v2 ? curr : prev;
-                });
-                if (candidate) Composite.remove(engine.world, candidate);
+                let candidate = bodies.reduce((prev, curr) => Vector.magnitude(curr.velocity) < Vector.magnitude(prev.velocity) ? curr : prev);
+                Composite.remove(engine.world, candidate);
             }
 
-            const radius = 12 + Math.random() * 18;
-            const hue = Math.floor(Math.random() * 360);
+            const freqIndex = Math.floor(Math.random() * SCALE.length);
+            const assignedFreq = SCALE[freqIndex];
+            const hue = Math.floor((freqIndex / SCALE.length) * 320); 
+            const radius = 10 + Math.random() * 15;
+
             const circle = Bodies.circle(x, y, radius, {
-                restitution: 1.0, 
-                friction: 0.005, 
-                frictionAir: 0.001,
+                restitution: 1.15, 
+                friction: 0,
+                frictionAir: 0.002,
                 render: { 
-                    fillStyle: `hsl(${hue}, 75%, 65%)`,
-                    strokeStyle: 'rgba(255,255,255,0.3)',
-                    lineWidth: 2
+                    fillStyle: `hsla(${hue}, 60%, 50%, 0.25)`, // High transparency
+                    strokeStyle: `hsla(${hue}, 80%, 70%, 0.5)`,
+                    lineWidth: 1.5
                 }
             });
-            circle.radius = radius;
-            const scaleIdx = Math.floor((hue / 360) * (C_MAJOR_SCALE.length - 1));
-            circle.freq = C_MAJOR_SCALE[scaleIdx];
             
+            circle.assignedFreq = assignedFreq;
+            circle.circleRadius = radius;
+            circle.hue = hue;
+            
+            Body.setVelocity(circle, { x: (Math.random()-0.5)*10, y: (Math.random()-0.5)*10 });
             Composite.add(engine.world, circle);
             updateStats();
         }
 
         function updateStats() {
             const count = Composite.allBodies(engine.world).filter(b => !b.isStatic).length;
-            document.getElementById('stats').innerText = `NODES: ${count} / ${MAX_OBJECTS}`;
-            
-            if (masterGain) {
-                const adaptiveGain = 0.55 * (1 - (count / (MAX_OBJECTS * 3)));
-                masterGain.gain.setTargetAtTime(Math.max(0.2, adaptiveGain), audioCtx.currentTime, 0.1);
-            }
-        }
-
-        function triggerVoice(freq, vol, radius, speed) {
-            const voice = voicePool.get(freq);
-            if (!voice) return;
-
-            const now = audioCtx.currentTime;
-            const { vGain, vFilter } = voice;
-
-            const cutoff = Math.min(audioCtx.sampleRate / 2, 800 + speed * 2500);
-            vFilter.frequency.setTargetAtTime(cutoff, now, 0.02);
-
-            vGain.gain.cancelScheduledValues(now);
-            vGain.gain.setValueAtTime(vGain.gain.value, now);
-            vGain.gain.linearRampToValueAtTime(vol, now + 0.012); 
-            
-            const decayTime = 0.5 + (radius / 30) * 1.2;
-            vGain.gain.setTargetAtTime(0, now + 0.03, decayTime / 4);
+            document.getElementById('stats').innerText = `ETHEREAL NODES: ${count} / ${MAX_OBJECTS}`;
         }
 
         function handleOrientation(event) {
@@ -328,32 +315,8 @@
             const b = event.beta; 
             const g = event.gamma;
             if (b !== null && g !== null) {
-                let gx = g * 0.25;
-                let gy = b * 0.25;
-                const orientation = window.screen.orientation ? window.screen.orientation.type : window.orientation;
-                if (orientation.toString().includes('landscape') || orientation === 90 || orientation === -90) {
-                    const temp = gx;
-                    gx = gy * (orientation === 90 || orientation === 'landscape-primary' ? 1 : -1);
-                    gy = temp * (orientation === 90 || orientation === 'landscape-primary' ? -1 : 1);
-                }
-                engine.gravity.x = Math.max(-4, Math.min(gx, 4));
-                engine.gravity.y = Math.max(-4, Math.min(gy, 4));
-                debug.innerText = `ROBUST_MODE | G_X: ${gx.toFixed(1)} | G_Y: ${gy.toFixed(1)}`;
-            }
-        }
-
-        function handleMotion(event) {
-            if (!isStarted) return;
-            const acc = event.acceleration;
-            if (acc && (Math.abs(acc.x) > 15 || Math.abs(acc.y) > 15)) {
-                Composite.allBodies(engine.world).forEach(b => {
-                    if(!b.isStatic) {
-                        // Safe force application
-                        const fx = (Math.random()-0.5)*0.5;
-                        const fy = (Math.random()-0.5)*0.5;
-                        Body.applyForce(b, b.position, { x: fx, y: fy });
-                    }
-                });
+                engine.gravity.x = Math.max(-5, Math.min(g * 0.2, 5));
+                engine.gravity.y = Math.max(-5, Math.min(b * 0.2, 5));
             }
         }
 
@@ -362,14 +325,10 @@
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
                     const status = await DeviceOrientationEvent.requestPermission();
-                    if (status === 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation, true);
-                        window.addEventListener('devicemotion', handleMotion, true);
-                    }
-                } catch (e) { debug.innerText = "SENSOR_LOCKED"; }
+                    if (status === 'granted') window.addEventListener('deviceorientation', handleOrientation, true);
+                } catch (e) { }
             } else {
                 window.addEventListener('deviceorientation', handleOrientation, true);
-                window.addEventListener('devicemotion', handleMotion, true);
             }
             initPhysics();
             isStarted = true;
@@ -380,11 +339,11 @@
         window.addEventListener('touchstart', (e) => {
             if (!isStarted || e.target.closest('button')) return;
             addCircle(e.touches[0].clientX, e.touches[0].clientY);
-            triggerVoice(C_MAJOR_SCALE[0], 0.1, 10, 5); 
         }, { passive: false });
 
         document.getElementById('clear-btn').addEventListener('click', () => {
             Composite.remove(engine.world, Composite.allBodies(engine.world).filter(b => !b.isStatic));
+            particles = [];
             updateStats();
         });
 
